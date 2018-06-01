@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rivine/rivine/api"
-	"github.com/rivine/rivine/pkg/cli"
-	"github.com/rivine/rivine/types"
+	"github.com/jimbersoftware/rivine/api"
+	"github.com/jimbersoftware/rivine/pkg/cli"
+	"github.com/jimbersoftware/rivine/types"
 	"github.com/spf13/cobra"
 )
 
@@ -214,10 +214,16 @@ func createAtomicSwapContract(hastings types.Currency, sender, receiver types.Un
 		TimeLock:     types.OffsetTimestamp(atomicSwapInitiatecfg.duration),
 	}
 	if !yesToAll {
-		// print contract for review
-		printContractInfo(hastings, condition, secret)
-		fmt.Println("")
-
+		if atomicswapCfg.EncodingType == cli.EncodingTypeHuman {
+			// print contract for review
+			printContractInfo(hastings, condition, secret)
+			fmt.Println("")
+		}
+		if atomicswapCfg.EncodingType == cli.EncodingTypeJSON {
+			m := getContractInfo(hastings, condition, secret)
+			b, _ := json.Marshal(m)
+			fmt.Println(string(b))
+		}
 		// ensure user wants to continue with creating the contract as it is (aka publishing it)
 		if !askYesNoQuestion("Publish atomic swap transaction?") {
 			Die("cancelled atomic swap contract")
@@ -249,10 +255,17 @@ func createAtomicSwapContract(hastings types.Currency, sender, receiver types.Un
 		Die("didn't find atomic swap contract registered in any returned coin output")
 	}
 	if atomicswapCfg.EncodingType == cli.EncodingTypeJSON {
-		m := map[string]interface{}{
-			"outputId":      response.Transaction.CoinOutputID(uint64(coinOutputIndex)),
-			"transactionID": response.Transaction.ID(),
+		var m map[string]interface{}
+
+		if yesToAll {
+			m = getContractInfo(hastings, condition, secret)
+		} else {
+			m = make(map[string]interface{})
 		}
+
+		m["outputId"] = response.Transaction.CoinOutputID(uint64(coinOutputIndex))
+		m["transactionID"] = response.Transaction.ID()
+
 		b, _ := json.Marshal(m)
 		fmt.Println(string(b))
 		return
@@ -609,8 +622,18 @@ func spendAtomicSwapContract(outputID types.CoinOutputID, secret types.AtomicSwa
 	// step 3: confirm contract details with user, before continuing
 	// print contract for review
 	if !yesToAll {
-		printContractInfo(unspentCoinOutputResp.Output.Value, *condition, secret)
-		fmt.Println("")
+		if atomicswapCfg.EncodingType == cli.EncodingTypeHuman {
+			// print contract for review
+			printContractInfo(unspentCoinOutputResp.Output.Value, *condition, secret)
+			fmt.Println("")
+		}
+
+		if atomicswapCfg.EncodingType == cli.EncodingTypeJSON {
+			m := getContractInfo(unspentCoinOutputResp.Output.Value, *condition, secret)
+			b, _ := json.Marshal(m)
+			fmt.Println(string(b))
+		}
+
 		// ensure user wants to continue with redeeming the contract!
 		if !askYesNoQuestion("Publish atomic swap " + keyWord + " transaction?") {
 			Die("atomic swap " + keyWord + " transaction cancelled")
@@ -654,9 +677,15 @@ func spendAtomicSwapContract(outputID types.CoinOutputID, secret types.AtomicSwa
 	}
 
 	if atomicswapCfg.EncodingType == cli.EncodingTypeJSON {
-		m := map[string]interface{}{
-			"transactionId": txnid,
+		var m map[string]interface{}
+
+		if yesToAll {
+			m = getContractInfo(unspentCoinOutputResp.Output.Value, *condition, secret)
+		} else {
+			m = make(map[string]interface{})
 		}
+		m["transactionID"] = txnid
+
 		b, _ := json.Marshal(m)
 		fmt.Println(string(b))
 		return
@@ -741,6 +770,22 @@ TimeLock reached in: %s
 		time.Unix(int64(condition.TimeLock), 0).Sub(time.Now()))
 }
 
+func getContractInfo(hastings types.Currency, condition types.AtomicSwapCondition, secret types.AtomicSwapSecret) map[string]interface{} {
+
+	m := map[string]interface{}{
+		"contractValue":     _CurrencyConvertor.ToCoinStringWithUnit(hastings),
+		"secret":            secret,
+		"contractAddress":   condition.UnlockHash(),
+		"receiversAddress":  condition.Receiver,
+		"sendersAddress":    condition.Sender,
+		"secretHash":        condition.HashedSecret,
+		"timeLock":          condition.TimeLock,
+		"timeLockReachedIn": time.Unix(int64(condition.TimeLock), 0).Sub(time.Now()),
+	}
+	return m
+
+}
+
 func askYesNoQuestion(str string) bool {
 	fmt.Printf("%s [Y/N] ", str)
 	var response string
@@ -795,7 +840,7 @@ func init() {
 	atomicSwapCmd.PersistentFlags().BoolVarP(&yesToAll, "yes", "y",
 		yesToAll, "Default answer 'yes' to all questions.")
 
-	atomicSwapCmd.Flags().Var(
+	atomicSwapCmd.PersistentFlags().Var(
 		cli.NewEncodingTypeFlag(0, &atomicswapCfg.EncodingType, 0), "encoding",
 		cli.EncodingTypeFlagDescription(0))
 
